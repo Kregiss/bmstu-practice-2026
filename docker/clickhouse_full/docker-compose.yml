@@ -1,0 +1,10 @@
+services:
+  clickhouse_full:
+    image: clickhouse/clickhouse-server:latest
+    container_name: clickhouse_full
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - ../../data/people.csv:/data/people.csv
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql

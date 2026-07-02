@@ -1,0 +1,10 @@
+services:
+  clickhouse_fuzzy:
+    image: clickhouse/clickhouse-server:latest
+    container_name: clickhouse_fuzzy
+    ports:
+      - "8124:8123"
+      - "9001:9000"
+    volumes:
+      - ../../data/people.csv:/data/people.csv
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql

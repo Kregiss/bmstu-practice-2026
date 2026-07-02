@@ -1,0 +1,10 @@
+services:
+  elasticsearch:
+    image: elasticsearch:8.14.0
+    container_name: elastic_fuzzy
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+    ports:
+      - "9201:9200"

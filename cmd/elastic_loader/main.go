@@ -8,12 +8,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"flag"
 )
 
 const (
-	elasticURL = "http://127.0.0.1:9201"
 	indexName  = "people"
 )
+var elasticURL string
 
 type Person struct {
 	ID         int    `json:"id"`
@@ -24,6 +25,9 @@ type Person struct {
 }
 
 func main() {
+	port := flag.String("port", "9200", "Elasticsearch port")
+	flag.Parse()
+	elasticURL = "http://127.0.0.1:" + *port
 	fmt.Println("Start Elasticsearch loader")
 	createIndex()
 	loadCSV()

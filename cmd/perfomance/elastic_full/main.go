@@ -45,6 +45,7 @@ func main() {
 	for i, q := range queries {
 
 		query := map[string]interface{}{
+			"size": 1,
 			"query": map[string]interface{}{
 				"match": map[string]interface{}{
 					"full_name": q,

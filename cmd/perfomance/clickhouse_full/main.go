@@ -42,6 +42,7 @@ func main() {
 			WHERE hasToken(full_name, '%s')
 			AND hasToken(full_name, '%s')
 			AND hasToken(full_name, '%s')
+			LIMIT 1
 		`,
 			escape(parts[0]),
 			escape(parts[1]),

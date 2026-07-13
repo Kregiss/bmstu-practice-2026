@@ -61,6 +61,7 @@ func main() {
 			FROM people
 			WHERE to_tsvector('russian', full_name)
 			      @@ plainto_tsquery('russian', $1)
+			LIMIT 1
 		`, q)
 
 		if err != nil {

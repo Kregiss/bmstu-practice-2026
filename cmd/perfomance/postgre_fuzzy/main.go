@@ -88,9 +88,6 @@ func main() {
 		total += elapsed
 
 		if elapsed < min {
-			if elapsed == 0 {
-				fmt.Printf("Min query : %v, %s\n", i, q)
-			}
 			min = elapsed
 		}
 
@@ -104,8 +101,7 @@ func main() {
 		if i==1000 {break}
 	}
 
-	qps := float64(len(queries)) /
-       total.Seconds()
+	qps := float64(len(queries)) / total.Seconds()
 	avg := total / time.Duration(len(queries))
 
 	fmt.Println()
@@ -135,8 +131,8 @@ func loadQueries(path string) []string {
 
 	var queries []string
 
-	for i := 1; i < len(rows); i++ {
-		queries = append(queries, rows[i][0])
+	for _, row := range rows {
+		queries = append(queries, row[0])
 	}
 
 	return queries

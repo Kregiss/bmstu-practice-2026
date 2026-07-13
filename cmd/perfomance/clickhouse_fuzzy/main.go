@@ -24,6 +24,7 @@ func main() {
 		max   time.Duration
 	)
 	var min = time.Hour
+
 	for i, q := range queries {
 		start := time.Now()
 
@@ -49,6 +50,7 @@ func main() {
 
 		elapsed := time.Since(start)
 		total += elapsed
+		
 		if elapsed < min {
 			min = elapsed
 		}
@@ -58,16 +60,12 @@ func main() {
 		if (i+1)%100 == 0 {
 			fmt.Printf("%d/%d completed\n", i+1, len(queries))
 		}
-
-		if i == 1000 {
-			break
-		}
 	}
 	qps := float64(len(queries)) / total.Seconds()
 	avg := total / time.Duration(len(queries))
 
 	fmt.Println()
-	fmt.Println("========== RESULT ==========")
+	fmt.Println("-------------- RESULT --------------")
 	fmt.Printf("Queries : %d\n", len(queries))
 	fmt.Printf("Average : %v\n", avg)
 	fmt.Printf("Minimum : %.5f\n", float64(min.Nanoseconds())/1000)
@@ -81,7 +79,6 @@ func escape(s string) string {
 }
 
 func loadQueries(path string) []string {
-
 	file, err := os.Open(path)
 	if err != nil {
 		log.Fatal(err)
@@ -89,17 +86,14 @@ func loadQueries(path string) []string {
 	defer file.Close()
 
 	reader := csv.NewReader(file)
-
 	rows, err := reader.ReadAll()
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	var queries []string
-
 	for _, row := range rows {
 		queries = append(queries, row[0])
 	}
-
 	return queries
 }

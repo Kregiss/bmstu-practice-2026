@@ -31,7 +31,7 @@ func main() {
 		sql := fmt.Sprintf(`
 			SELECT id
 			FROM people
-			ORDER BY ngramDistance(full_name,'%s')
+			ORDER BY ngramDistanceCaseInsensitiveUTF8(full_name,'%s')
 			LIMIT 1
 		`, escape(q))
 

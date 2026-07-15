@@ -27,7 +27,7 @@
 * PostgreSQL fuzzy: GiST trigram index `gist_trgm_ops` и KNN-запрос `ORDER BY full_name <-> $1 LIMIT 1`.
 * ClickHouse full-text/token search: `tokenbf_v1` по `full_name`, запрос через три `hasToken` с `AND`.
 * ClickHouse fuzzy: `ngrambf_v1` по `full_name`, предварительный фильтр по `ngramDistanceCaseInsensitiveUTF8(...) <= 0.45` и затем сортировка ближайших кандидатов.
-* Elasticsearch full-text: custom analyzer `standard + lowercase`, `match` с `operator: and`, `_source: false`, `track_total_hits: false`.
-* Elasticsearch fuzzy: тот же analyzer, `match` с `operator: and`, `fuzziness: AUTO`, `prefix_length: 1`, `max_expansions: 20`, `_source: false`, `track_total_hits: false`.
+* Elasticsearch full-text: custom analyzer `standard + lowercase`, batched `_msearch` по 100 запросов, `match` с `operator: and`, `_source: false`, `track_total_hits: false`.
+* Elasticsearch fuzzy: тот же analyzer, batched `_msearch` по 100 запросов, `match` с `operator: and`, `fuzziness: AUTO`, `prefix_length: 1`, `max_expansions: 20`, `_source: false`, `track_total_hits: false`.
 
 После изменения SQL init-файлов нужно пересоздать соответствующие контейнеры/volumes, иначе Docker не применит init-скрипты к уже созданным базам. Elasticsearch-загрузчик по умолчанию удаляет и пересоздаёт индекс; если нужно сохранить индекс, используйте `-recreate=false`.

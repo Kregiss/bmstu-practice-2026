@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -33,17 +34,22 @@ func main() {
 		max   time.Duration
 	)
 	min = time.Hour
-	url := fmt.Sprintf("http://%s:%d/people/_search", host, port)
-	client := &http.Client{}
+	url := fmt.Sprintf("http://%s:%d/people/_search?filter_path=hits.hits._id", host, port)
+	client := &http.Client{Timeout: 10 * time.Second}
 
 	for i, q := range queries {
 		query := map[string]interface{}{
-			"size": 1,
+			"size":             1,
+			"_source":          false,
+			"track_total_hits": false,
 			"query": map[string]interface{}{
 				"match": map[string]interface{}{
 					"full_name": map[string]interface{}{
-						"query": q,
-						"fuzziness": "AUTO",
+						"query":          q,
+						"operator":       "and",
+						"fuzziness":      "AUTO",
+						"prefix_length":  1,
+						"max_expansions": 20,
 					},
 				},
 			},
@@ -65,6 +71,12 @@ func main() {
 		resp, err := client.Do(req)
 		if err != nil {
 			log.Fatal(err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			log.Fatalf("search failed: %s: %s", resp.Status, string(body))
 		}
 
 		var result SearchResponse

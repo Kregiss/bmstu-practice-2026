@@ -4,16 +4,17 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
-	"flag"
+	"time"
 )
 
-const (
-	indexName  = "people"
-)
+const indexName = "people"
+
 var elasticURL string
 
 type Person struct {
@@ -26,65 +27,77 @@ type Person struct {
 
 func main() {
 	port := flag.String("port", "9200", "Elasticsearch port")
+	recreate := flag.Bool("recreate", true, "delete and recreate the index before loading data")
 	flag.Parse()
+
 	elasticURL = "http://127.0.0.1:" + *port
 	fmt.Println("Start Elasticsearch loader")
+	if *recreate {
+		deleteIndex()
+	}
 	createIndex()
 	loadCSV()
+	setRefreshInterval("1s")
+	refreshIndex()
 	fmt.Println("Loading completed")
 }
 
-
-func createIndex() {
-	body := `
-	{
-	  "mappings": {
-	    "properties": {
-	      "id": {
-	        "type": "integer"
-	      },
-	      "last_name": {
-	        "type": "text"
-	      },
-	      "first_name": {
-	        "type": "text"
-	      },
-	      "middle_name": {
-	        "type": "text"
-	      },
-	      "full_name": {
-	        "type": "text"
-	      }
-	    }
-	  }
-	}
-	`
-	req, err := http.NewRequest(
-		"PUT",
-		elasticURL+"/"+indexName,
-		bytes.NewBuffer([]byte(body)),
-	)
+func deleteIndex() {
+	req, err := http.NewRequest(http.MethodDelete, elasticURL+"/"+indexName, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-	req.Header.Set(
-		"Content-Type",
-		"application/json",
-	)
-
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 && resp.StatusCode != 201 {
-		fmt.Println("Index already exists or error")
-	} else {
-		fmt.Println("Index created")
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+		failResponse("delete index", resp)
 	}
 }
 
+func createIndex() {
+	body := `
+{
+  "settings": {
+    "refresh_interval": "-1",
+    "number_of_replicas": 0,
+    "analysis": {
+      "analyzer": {
+        "name_analyzer": {
+          "type": "custom",
+          "tokenizer": "standard",
+          "filter": ["lowercase"]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "id": { "type": "integer" },
+      "last_name": { "type": "text", "analyzer": "name_analyzer", "search_analyzer": "name_analyzer" },
+      "first_name": { "type": "text", "analyzer": "name_analyzer", "search_analyzer": "name_analyzer" },
+      "middle_name": { "type": "text", "analyzer": "name_analyzer", "search_analyzer": "name_analyzer" },
+      "full_name": { "type": "text", "analyzer": "name_analyzer", "search_analyzer": "name_analyzer" }
+    }
+  }
+}`
+	req, err := http.NewRequest(http.MethodPut, elasticURL+"/"+indexName, bytes.NewBufferString(body))
+	if err != nil {
+		log.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		failResponse("create index", resp)
+	}
+	fmt.Println("Index created")
+}
 
 func loadCSV() {
 	file, err := os.Open("data/people.csv")
@@ -92,49 +105,30 @@ func loadCSV() {
 		log.Fatal(err)
 	}
 	defer file.Close()
+
 	reader := csv.NewReader(file)
-	rows, err := reader.ReadAll()
-	if err != nil {
-		log.Fatal(err)
-	}
 	var buffer bytes.Buffer
 	count := 0
-	for i := 0; i < len(rows); i++ {
-		person := Person{
-			ID: atoi(rows[i][0]),
-			LastName: rows[i][1],
-			FirstName: rows[i][2],
-			MiddleName: rows[i][3],
-			FullName:
-				rows[i][1] + " " +
-				rows[i][2] + " " +
-				rows[i][3],
+	for {
+		row, err := reader.Read()
+		if err == io.EOF {
+			break
 		}
-		meta := []byte(
-			fmt.Sprintf(
-				`{"index":{"_index":"%s","_id":"%d"}}`,
-				indexName,
-				person.ID,
-			),
-		)
+		if err != nil {
+			log.Fatal(err)
+		}
+		person := Person{ID: atoi(row[0]), LastName: row[1], FirstName: row[2], MiddleName: row[3], FullName: row[1] + " " + row[2] + " " + row[3]}
+		fmt.Fprintf(&buffer, `{"index":{"_index":"%s","_id":"%d"}}`+"\n", indexName, person.ID)
 		doc, err := json.Marshal(person)
 		if err != nil {
 			log.Fatal(err)
 		}
-		buffer.Write(meta)
-		buffer.WriteByte('\n')
-
 		buffer.Write(doc)
 		buffer.WriteByte('\n')
-
 		count++
-		// отправляем пачками по 5000 документов
 		if count%5000 == 0 {
 			sendBulk(&buffer)
-			fmt.Printf(
-				"Loaded %d documents\n",
-				count,
-			)
+			fmt.Printf("Loaded %d documents\n", count)
 		}
 	}
 	if buffer.Len() > 0 {
@@ -143,30 +137,66 @@ func loadCSV() {
 }
 
 func sendBulk(buffer *bytes.Buffer) {
-	req, err := http.NewRequest(
-		"POST",
-		elasticURL+"/_bulk",
-		buffer,
-	)
+	req, err := http.NewRequest(http.MethodPost, elasticURL+"/_bulk", buffer)
 	if err != nil {
 		log.Fatal(err)
 	}
-	req.Header.Set(
-		"Content-Type",
-		"application/x-ndjson",
-	)
+	req.Header.Set("Content-Type", "application/x-ndjson")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		fmt.Println(
-			"Bulk error:",
-			resp.Status,
-		)
+	if resp.StatusCode != http.StatusOK {
+		failResponse("bulk index", resp)
+	}
+	var result struct {
+		Errors bool `json:"errors"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Fatal(err)
+	}
+	if result.Errors {
+		log.Fatal("bulk index returned item errors")
 	}
 	buffer.Reset()
+}
+
+func setRefreshInterval(value string) {
+	body := fmt.Sprintf(`{"index":{"refresh_interval":"%s"}}`, value)
+	req, err := http.NewRequest(http.MethodPut, elasticURL+"/"+indexName+"/_settings", bytes.NewBufferString(body))
+	if err != nil {
+		log.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		failResponse("update index settings", resp)
+	}
+}
+
+func refreshIndex() {
+	req, err := http.NewRequest(http.MethodPost, elasticURL+"/"+indexName+"/_refresh", nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		failResponse("refresh index", resp)
+	}
+}
+
+func failResponse(action string, resp *http.Response) {
+	body, _ := io.ReadAll(resp.Body)
+	log.Fatalf("%s failed: %s: %s", action, resp.Status, string(body))
 }
 
 func atoi(s string) int {
@@ -175,4 +205,8 @@ func atoi(s string) int {
 		n = n*10 + int(c-'0')
 	}
 	return n
+}
+
+func init() {
+	http.DefaultClient.Timeout = 30 * time.Second
 }

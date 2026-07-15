@@ -25,7 +25,12 @@ func main() {
 		people[i], people[j] = people[j], people[i]
 	})
 	
-	file, err := os.Create("data/queries.csv")
+	filename := "data/queries.csv"
+	if *fuzzy {
+		filename = "data/queries_fuzzy.csv"
+	}
+
+	file, err := os.Create(filename)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -16,7 +16,7 @@ SELECT
     first_name,
     middle_name,
     concat(last_name, ' ', first_name, ' ', middle_name) as full_name
-FROM file('/data/people.csv', 'CSV');
+FROM file('people.csv', 'CSV', 'id UInt32, last_name String, first_name String, middle_name String');
 
 ALTER TABLE people
 ADD INDEX idx_ngram full_name TYPE ngrambf_v1(3, 4096, 3, 0) GRANULARITY 1;

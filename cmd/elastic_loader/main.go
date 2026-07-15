@@ -99,7 +99,7 @@ func loadCSV() {
 	}
 	var buffer bytes.Buffer
 	count := 0
-	for i := 1; i < len(rows); i++ {
+	for i := 0; i < len(rows); i++ {
 		person := Person{
 			ID: atoi(rows[i][0]),
 			LastName: rows[i][1],

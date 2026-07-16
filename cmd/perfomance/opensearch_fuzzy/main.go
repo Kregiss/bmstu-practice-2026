@@ -14,7 +14,7 @@ import (
 
 const (
 	host = "127.0.0.1"
-	port = 9200
+	port = 9202
 )
 
 type MultiSearchResponse struct {
@@ -32,8 +32,8 @@ type MultiSearchResponse struct {
 const batchSize = 100
 
 func main() {
-	fmt.Println("Connected to Elasticsearch")
-	queries := loadQueries("data/queries.csv")
+	fmt.Println("Connected to Elasticsearch (Fuzzy Search)")
+	queries := loadQueries("data/queries_fuzzy.csv")
 	var (
 		total time.Duration
 		min   time.Duration
@@ -59,9 +59,11 @@ func main() {
 				"query": map[string]interface{}{
 					"match": map[string]interface{}{
 						"full_name": map[string]interface{}{
-							"query":    q,
-							"operator": "and",
-        					"auto_generate_synonyms_phrase_query": false,
+							"query":          q,
+							"operator":       "and",
+							"fuzziness":      "AUTO",
+							"prefix_length":  0,
+							"max_expansions": 20,
 						},
 					},
 				},

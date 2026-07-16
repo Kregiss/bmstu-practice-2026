@@ -14,7 +14,7 @@ import (
 
 const (
 	host = "127.0.0.1"
-	port = 9200
+	port = 9202
 )
 
 type MultiSearchResponse struct {

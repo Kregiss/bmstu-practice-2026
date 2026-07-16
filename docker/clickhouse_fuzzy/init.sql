@@ -19,4 +19,8 @@ SELECT
 FROM file('people.csv', 'CSV', 'id UInt32, last_name String, first_name String, middle_name String');
 
 ALTER TABLE people
-ADD INDEX idx_ngram full_name TYPE ngrambf_v1(3, 4096, 3, 0) GRANULARITY 1;
+ADD INDEX idx_full_name_text full_name
+TYPE text(tokenizer = 'ngrams', preprocessor = lower(full_name))
+GRANULARITY 1;
+
+ALTER TABLE people MATERIALIZE INDEX idx_ngram;

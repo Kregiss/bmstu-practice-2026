@@ -27,9 +27,12 @@ func main() {
 	min = time.Hour
 
 	for i, q := range queries {
-		start := time.Now()		
+		start := time.Now()
 		parts := strings.Fields(q)
-		
+		if len(parts) != 3 {
+			log.Fatalf("expected three name parts, got %d for query: %s", len(parts), q)
+		}
+
 		sql := fmt.Sprintf(`
 			SELECT id
 			FROM people

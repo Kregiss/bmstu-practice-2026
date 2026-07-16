@@ -26,7 +26,7 @@ type Person struct {
 }
 
 func main() {
-	port := flag.String("port", "9200", "Elasticsearch port")
+	port := flag.String("port", "9202", "Elasticsearch port")
 	recreate := flag.Bool("recreate", true, "delete and recreate the index before loading data")
 	flag.Parse()
 

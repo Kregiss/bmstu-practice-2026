@@ -20,3 +20,5 @@ FROM file('/data/people.csv', 'CSV');
 
 ALTER TABLE people
 ADD INDEX idx_token full_name TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1;
+
+ALTER TABLE people MATERIALIZE INDEX idx_token;

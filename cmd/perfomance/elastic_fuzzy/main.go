@@ -5,7 +5,6 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -17,19 +16,13 @@ const (
 	port = 9201
 )
 
-type MultiSearchResponse struct {
-	Responses []struct {
-		Hits struct {
-			Hits []struct {
-				ID string `json:"_id"`
-			} `json:"hits"`
+type SearchResponse struct {
+	Hits struct {
+		Hits []struct {
+			ID string `json:"_id"`
 		} `json:"hits"`
-		Error  json.RawMessage `json:"error,omitempty"`
-		Status int             `json:"status"`
-	} `json:"responses"`
+	} `json:"hits"`
 }
-
-const batchSize = 100
 
 func main() {
 	fmt.Println("Connected to Elasticsearch (Fuzzy Search)")
@@ -40,89 +33,64 @@ func main() {
 		max   time.Duration
 	)
 	min = time.Hour
-	url := fmt.Sprintf("http://%s:%d/people/_msearch?filter_path=responses.hits.hits._id,responses.error,responses.status", host, port)
-	client := &http.Client{Timeout: 30 * time.Second}
+	url := fmt.Sprintf("http://%s:%d/people/_search", host, port)
+	client := &http.Client{}
 
-	for batchStart := 0; batchStart < len(queries); batchStart += batchSize {
-		batchEnd := batchStart + batchSize
-		if batchEnd > len(queries) {
-			batchEnd = len(queries)
-		}
-
-		var body bytes.Buffer
-		for _, q := range queries[batchStart:batchEnd] {
-			body.WriteString("{}\n")
-			query := map[string]interface{}{
-				"size":             1,
-				"_source":          false,
-				"track_total_hits": false,
-				"query": map[string]interface{}{
-					"match": map[string]interface{}{
-						"full_name": map[string]interface{}{
-							"query":          q,
-							"operator":       "and",
-							"fuzziness":      "AUTO",
-							"prefix_length":  1,
-							"max_expansions": 20,
-						},
+	for i, q := range queries {
+		query := map[string]interface{}{
+			"size": 1,
+			"query": map[string]interface{}{
+				"match": map[string]interface{}{
+					"full_name": map[string]interface{}{
+						"query": q,
+						"fuzziness": "AUTO",
 					},
 				},
-			}
-
-			payload, err := json.Marshal(query)
-			if err != nil {
-				log.Fatal(err)
-			}
-			body.Write(payload)
-			body.WriteByte('\n')
+			},
 		}
 
-		req, err := http.NewRequest("POST", url, &body)
+		body, err := json.Marshal(query)
 		if err != nil {
 			log.Fatal(err)
 		}
-		req.Header.Set("Content-Type", "application/x-ndjson")
 
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
 		start := time.Now()
+
 		resp, err := client.Do(req)
 		if err != nil {
 			log.Fatal(err)
 		}
-		if resp.StatusCode != http.StatusOK {
-			responseBody, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			log.Fatalf("msearch failed: %s: %s", resp.Status, string(responseBody))
-		}
 
-		var result MultiSearchResponse
+		var result SearchResponse
+
 		err = json.NewDecoder(resp.Body).Decode(&result)
 		resp.Body.Close()
+
 		if err != nil {
 			log.Fatal(err)
 		}
-		if len(result.Responses) != batchEnd-batchStart {
-			log.Fatalf("expected %d responses, got %d", batchEnd-batchStart, len(result.Responses))
-		}
-		for j, item := range result.Responses {
-			if item.Status >= 400 || len(item.Error) > 0 {
-				log.Fatalf("search failed for query %q: status=%d error=%s", queries[batchStart+j], item.Status, string(item.Error))
-			}
-			if len(item.Hits.Hits) == 0 {
-				log.Fatalf("Nothing found for query: %s", queries[batchStart+j])
-			}
+		if len(result.Hits.Hits) == 0 {
+			log.Fatalf("Nothing found for query: %s", q)
 		}
 
 		elapsed := time.Since(start)
 		total += elapsed
-		perQuery := elapsed / time.Duration(batchEnd-batchStart)
-		if perQuery < min {
-			min = perQuery
-		}
-		if perQuery > max {
-			max = perQuery
-		}
 
-		fmt.Printf("%d/%d completed\n", batchEnd, len(queries))
+		if elapsed < min {
+			min = elapsed
+		}
+		if elapsed > max {
+			max = elapsed
+		}
+		if (i+1)%100 == 0 {
+			fmt.Printf("%d/%d completed\n", i+1, len(queries))
+		}
 	}
 
 	qps := float64(len(queries)) / total.Seconds()

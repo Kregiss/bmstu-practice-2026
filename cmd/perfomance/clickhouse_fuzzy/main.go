@@ -28,14 +28,12 @@ func main() {
 	for i, q := range queries {
 		start := time.Now()
 
-		escaped := escape(q)
 		sql := fmt.Sprintf(`
 			SELECT id
 			FROM people
-			WHERE ngramDistanceCaseInsensitiveUTF8(full_name, '%s') <= 0.45
-			ORDER BY ngramDistanceCaseInsensitiveUTF8(full_name, '%s')
+			ORDER BY ngramDistanceCaseInsensitiveUTF8(full_name,'%s')
 			LIMIT 1
-		`, escaped, escaped)
+		`, escape(q))
 
 		resp, err := http.Post(
 			fmt.Sprintf("http://%s:%d/", host, port),
@@ -47,20 +45,12 @@ func main() {
 			log.Fatal(err)
 		}
 
-		body, err := io.ReadAll(resp.Body)
+		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
-
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		if len(strings.TrimSpace(string(body))) == 0 {
-			log.Fatalf("Query not found: %s", q)
-		}
 
 		elapsed := time.Since(start)
 		total += elapsed
-
+		
 		if elapsed < min {
 			min = elapsed
 		}

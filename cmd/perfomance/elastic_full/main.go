@@ -61,6 +61,7 @@ func main() {
 						"full_name": map[string]interface{}{
 							"query":    q,
 							"operator": "and",
+        					"auto_generate_synonyms_phrase_query": false,
 						},
 					},
 				},

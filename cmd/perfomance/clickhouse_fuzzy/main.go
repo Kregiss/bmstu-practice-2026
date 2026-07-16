@@ -32,8 +32,8 @@ func main() {
 		sql := fmt.Sprintf(`
 			SELECT id
 			FROM people
-			WHERE ngramDistanceCaseInsensitiveUTF8(full_name, '%s') <= 0.45
-			ORDER BY ngramDistanceCaseInsensitiveUTF8(full_name, '%s')
+			WHERE ngramDistanceUTF8(full_name, '%s') <= 0.45
+			ORDER BY ngramDistanceUTF8(full_name, '%s')
 			LIMIT 1
 		`, escaped, escaped)
 
@@ -78,7 +78,7 @@ func main() {
 	fmt.Println("-------------- RESULT --------------")
 	fmt.Printf("Queries : %d\n", len(queries))
 	fmt.Printf("Average : %v\n", avg)
-	fmt.Printf("Minimum : %.5f\n", float64(min.Nanoseconds())/1000)
+	fmt.Printf("Minimum : %v\n", min)
 	fmt.Printf("Maximum : %v\n", max)
 	fmt.Printf("Total : %v\n", total)
 	fmt.Printf("QPS : %v\n", qps)

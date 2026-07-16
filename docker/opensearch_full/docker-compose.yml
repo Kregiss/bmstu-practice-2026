@@ -1,0 +1,11 @@
+services:
+  opensearch:
+    image: opensearchproject/opensearch:2.19.0
+    container_name: opensearch
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+      - OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g
+    ports:
+      - "9202:9200"
+      - "9600:9600"

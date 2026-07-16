@@ -6,5 +6,5 @@ services:
       - "8123:8123"
       - "9000:9000"
     volumes:
-      - ../../data/people.csv:/data/people.csv
+      - ../../data/people.csv:/var/lib/clickhouse/user_files/people.csv
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql

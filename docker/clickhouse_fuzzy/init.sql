@@ -19,6 +19,4 @@ SELECT
 FROM file('/data/people.csv', 'CSV');
 
 ALTER TABLE people
-ADD INDEX idx_ngram full_name TYPE ngrambf_v1(3, 32768, 3, 0) GRANULARITY 1;
-
-ALTER TABLE people MATERIALIZE INDEX idx_ngram;
+ADD INDEX idx_ngram full_name TYPE ngrambf_v1(3, 4096, 3, 0) GRANULARITY 1;

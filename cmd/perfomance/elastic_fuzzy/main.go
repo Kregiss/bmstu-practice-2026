@@ -30,7 +30,6 @@ var workerConfigs = []int{
 	4,
 	16,
 	64,
-	128,
 }
 
 type BenchmarkResult struct {

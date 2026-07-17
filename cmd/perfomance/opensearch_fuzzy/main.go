@@ -61,9 +61,9 @@ func main() {
 						"full_name": map[string]interface{}{
 							"query":          q,
 							"operator":       "and",
-							"fuzziness":      "AUTO",
+							"fuzziness":      1,
 							"prefix_length":  0,
-							"max_expansions": 20,
+							"max_expansions": 5,
 						},
 					},
 				},

@@ -64,9 +64,7 @@ LIMIT 1
 `
 
 func main() {
-
 	ctx := context.Background()
-
 	connStr := fmt.Sprintf(
 		"postgres://%s:%s@%s:%d/%s?sslmode=disable",
 		user,
@@ -77,12 +75,10 @@ func main() {
 	)
 
 	config, err := pgxpool.ParseConfig(connStr)
-
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// количество соединений соответствует максимальной нагрузке
 	config.MaxConns = 64
 	config.MinConns = 4
 
@@ -101,39 +97,23 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println(
-		"Connected to PostgreSQL",
-	)
-
-	queries := loadQueries(
-		"data/queries.csv",
-	)
-
+	fmt.Println("Connected to PostgreSQL")
+	queries := loadQueries("data/queries.csv")
 	fmt.Println("warmup...")
 
 	for i := 0; i < warmupCount && i < len(queries); i++ {
-
-		_, _ = execute(
-			ctx,
-			pool,
-			queries[i],
-		)
-
+		_, _ = execute(ctx,pool,queries[i])
 	}
 
 	fmt.Println()
-
 	for _, workers := range workerConfigs {
-
 		fmt.Printf(
 			"========== %d workers ==========\n",
 			workers,
 		)
-
 		var results []BenchmarkResult
 
 		for run := 1; run <= runsPerLevel; run++ {
-
 			result := runBenchmark(
 				ctx,
 				pool,
@@ -157,15 +137,10 @@ func main() {
 				result.P99,
 				result.Errors,
 			)
-
 		}
-
 		printMedianResult(results)
-
 		fmt.Println()
-
 	}
-
 }
 
 func runBenchmark(
@@ -195,22 +170,16 @@ func runBenchmark(
 	startWall := time.Now()
 
 	for i := 0; i < workers; i++ {
-
 		wg.Add(1)
-
 		go func() {
-
 			defer wg.Done()
-
 			local := make(
 				[]time.Duration,
 				0,
 			)
 
 			for q := range queryCh {
-
 				start := time.Now()
-
 				found, err := execute(
 					ctx,
 					pool,
@@ -218,11 +187,8 @@ func runBenchmark(
 				)
 
 				elapsed := time.Since(start)
-
 				if err != nil {
-
 					errors.Add(1)
-
 					continue
 				}
 
@@ -232,40 +198,27 @@ func runBenchmark(
 				)
 
 				if found {
-
 					hits.Add(1)
-
 				} else {
-
 					misses.Add(1)
-
 				}
-
 			}
 
-			mu.Lock()
-
+			mu.Lock()			
 			latencies = append(
 				latencies,
 				local...,
 			)
-
 			mu.Unlock()
-
 		}()
-
 	}
 
 	for _, q := range queries {
-
 		queryCh <- q
-
 	}
 
 	close(queryCh)
-
 	wg.Wait()
-
 	wall := time.Since(startWall)
 
 	slices.Sort(latencies)
@@ -273,13 +226,10 @@ func runBenchmark(
 	var total time.Duration
 
 	for _, v := range latencies {
-
 		total += v
-
 	}
 
 	result := BenchmarkResult{
-
 		Workers: workers,
 
 		Queries: uint64(len(queries)),
@@ -294,35 +244,13 @@ func runBenchmark(
 	}
 
 	if len(latencies) > 0 {
-
-		result.Avg =
-			total / time.Duration(len(latencies))
-
-		result.P50 =
-			percentile(
-				latencies,
-				50,
-			)
-
-		result.P95 =
-			percentile(
-				latencies,
-				95,
-			)
-
-		result.P99 =
-			percentile(
-				latencies,
-				99,
-			)
-
-		result.Max =
-			latencies[len(latencies)-1]
-
+		result.Avg = total / time.Duration(len(latencies))
+		result.P50 = percentile(latencies,50)
+		result.P95 = percentile(latencies,95)
+		result.P99 = percentile(latencies,99)
+		result.Max = latencies[len(latencies)-1]
 	}
-
 	return result
-
 }
 
 func execute(
@@ -332,28 +260,18 @@ func execute(
 ) (bool, error) {
 
 	var id int64
-
 	err := pool.QueryRow(
 		ctx,
 		querySQL,
 		query,
 	).Scan(&id)
-
 	if err != nil {
-
-		// отсутствие результата
 		if err.Error() == "no rows in result set" {
-
 			return false, nil
-
 		}
-
 		return false, err
-
 	}
-
 	return true, nil
-
 }
 
 func percentile(
@@ -374,7 +292,6 @@ func percentile(
 func printMedianResult(
 	results []BenchmarkResult,
 ) {
-
 	slices.SortFunc(
 		results,
 		func(a, b BenchmarkResult) int {
@@ -391,108 +308,46 @@ func printMedianResult(
 		},
 	)
 
-	m := results[len(results)/2]
-
+	m:=results[len(results)/2]
 	fmt.Println("---- median run ----")
 
-	fmt.Printf(
-		"workers : %d\n",
-		m.Workers,
-	)
+	fmt.Printf("workers : %d\n", m.Workers)
+	fmt.Printf("queries : %d\n", m.Queries)
+	fmt.Printf("hits    : %d\n", m.Hits)
+	fmt.Printf("misses  : %d\n", m.Misses)
+	fmt.Printf("errors  : %d\n", m.Errors)
 
-	fmt.Printf(
-		"queries : %d\n",
-		m.Queries,
-	)
+	fmt.Printf("avg     : %v\n", m.Avg)
+	fmt.Printf("p50     : %v\n", m.P50)
+	fmt.Printf("p95     : %v\n", m.P95)
+	fmt.Printf("p99     : %v\n", m.P99)
+	fmt.Printf("max     : %v\n", m.Max)
 
-	fmt.Printf(
-		"hits    : %d\n",
-		m.Hits,
-	)
-
-	fmt.Printf(
-		"misses  : %d\n",
-		m.Misses,
-	)
-
-	fmt.Printf(
-		"errors  : %d\n",
-		m.Errors,
-	)
-
-	fmt.Printf(
-		"avg     : %v\n",
-		m.Avg,
-	)
-
-	fmt.Printf(
-		"p50     : %v\n",
-		m.P50,
-	)
-
-	fmt.Printf(
-		"p95     : %v\n",
-		m.P95,
-	)
-
-	fmt.Printf(
-		"p99     : %v\n",
-		m.P99,
-	)
-
-	fmt.Printf(
-		"max     : %v\n",
-		m.Max,
-	)
-
-	fmt.Printf(
-		"wall    : %v\n",
-		m.WallTime,
-	)
-
-	fmt.Printf(
-		"qps     : %.0f\n",
-		m.QPS,
-	)
-
+	fmt.Printf("wall    : %v\n", m.WallTime)
+	fmt.Printf("qps     : %.0f\n", m.QPS)
 }
 
-func loadQueries(
-	path string,
-) []string {
-
-	file, err := os.Open(path)
-
-	if err != nil {
+func loadQueries(path string)[]string{
+	file,err:=os.Open(path)
+	if err!=nil{
 		log.Fatal(err)
 	}
-
 	defer file.Close()
 
-	rows, err := csv.NewReader(file).ReadAll()
-
-	if err != nil {
+	rows,err:=csv.NewReader(file).ReadAll()
+	if err!=nil{
 		log.Fatal(err)
 	}
+	result:=make([]string,0,len(rows))
 
-	result := make(
-		[]string,
-		0,
-		len(rows),
-	)
-
-	for _, row := range rows {
-
-		if len(row) == 0 {
+	for _,row:=range rows{
+		if len(row)==0{
 			continue
 		}
-
-		result = append(
+		result=append(
 			result,
 			row[0],
 		)
-
 	}
-
 	return result
 }

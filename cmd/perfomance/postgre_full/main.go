@@ -34,12 +34,11 @@ var workerConfigs = []int{
 }
 
 type BenchmarkResult struct {
-
 	Workers int
 
 	Queries uint64
 
-	Hits uint64
+	Hits   uint64
 	Misses uint64
 	Errors uint64
 
@@ -56,8 +55,6 @@ type BenchmarkResult struct {
 	QPS float64
 }
 
-
-
 const querySQL = `
 SELECT id
 FROM people
@@ -66,16 +63,11 @@ WHERE to_tsvector('russian', full_name)
 LIMIT 1
 `
 
-
-
 func main() {
 
+	ctx := context.Background()
 
-	ctx:=context.Background()
-
-
-
-	connStr:=fmt.Sprintf(
+	connStr := fmt.Sprintf(
 		"postgres://%s:%s@%s:%d/%s?sslmode=disable",
 		user,
 		password,
@@ -84,59 +76,44 @@ func main() {
 		dbname,
 	)
 
+	config, err := pgxpool.ParseConfig(connStr)
 
-
-	config,err:=pgxpool.ParseConfig(connStr)
-
-	if err!=nil{
+	if err != nil {
 		log.Fatal(err)
 	}
 
-
-
 	// количество соединений соответствует максимальной нагрузке
-	config.MaxConns=64
-	config.MinConns=4
+	config.MaxConns = 64
+	config.MinConns = 4
 
-
-
-	pool,err:=pgxpool.NewWithConfig(
+	pool, err := pgxpool.NewWithConfig(
 		ctx,
 		config,
 	)
 
-	if err!=nil{
+	if err != nil {
 		log.Fatal(err)
 	}
 
 	defer pool.Close()
 
-
-
-	if err:=pool.Ping(ctx);err!=nil{
+	if err := pool.Ping(ctx); err != nil {
 		log.Fatal(err)
 	}
-
-
 
 	fmt.Println(
 		"Connected to PostgreSQL",
 	)
 
-
-
-	queries:=loadQueries(
+	queries := loadQueries(
 		"data/queries.csv",
 	)
 
-
-
 	fmt.Println("warmup...")
 
+	for i := 0; i < warmupCount && i < len(queries); i++ {
 
-	for i:=0;i<warmupCount && i<len(queries);i++{
-
-		_,_=execute(
+		_, _ = execute(
 			ctx,
 			pool,
 			queries[i],
@@ -144,43 +121,30 @@ func main() {
 
 	}
 
-
-
 	fmt.Println()
 
-
-
-	for _,workers:=range workerConfigs{
-
+	for _, workers := range workerConfigs {
 
 		fmt.Printf(
 			"========== %d workers ==========\n",
 			workers,
 		)
 
-
 		var results []BenchmarkResult
 
+		for run := 1; run <= runsPerLevel; run++ {
 
-
-		for run:=1;run<=runsPerLevel;run++{
-
-
-			result:=runBenchmark(
+			result := runBenchmark(
 				ctx,
 				pool,
 				queries,
 				workers,
 			)
 
-
-
-			results=append(
+			results = append(
 				results,
 				result,
 			)
-
-
 
 			fmt.Printf(
 				"run=%d workers=%d qps=%.0f avg=%v p50=%v p95=%v p99=%v errors=%d\n",
@@ -196,7 +160,6 @@ func main() {
 
 		}
 
-
 		printMedianResult(results)
 
 		fmt.Println()
@@ -205,10 +168,6 @@ func main() {
 
 }
 
-
-
-
-
 func runBenchmark(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -216,97 +175,67 @@ func runBenchmark(
 	workers int,
 ) BenchmarkResult {
 
-
-	queryCh:=make(
+	queryCh := make(
 		chan string,
 	)
 
-
-
 	var wg sync.WaitGroup
 
-
-
 	var (
-		hits atomic.Uint64
+		hits   atomic.Uint64
 		misses atomic.Uint64
 		errors atomic.Uint64
 	)
 
-
-
 	var (
-		mu sync.Mutex
+		mu        sync.Mutex
 		latencies []time.Duration
 	)
 
+	startWall := time.Now()
 
-
-	startWall:=time.Now()
-
-
-
-	for i:=0;i<workers;i++{
-
+	for i := 0; i < workers; i++ {
 
 		wg.Add(1)
 
-
-
-		go func(){
-
+		go func() {
 
 			defer wg.Done()
 
-
-
-			local:=make(
+			local := make(
 				[]time.Duration,
 				0,
 			)
 
+			for q := range queryCh {
 
+				start := time.Now()
 
-			for q:=range queryCh{
-
-
-				start:=time.Now()
-
-
-
-				found,err:=execute(
+				found, err := execute(
 					ctx,
 					pool,
 					q,
 				)
 
+				elapsed := time.Since(start)
 
-
-				elapsed:=time.Since(start)
-
-
-
-				if err!=nil{
+				if err != nil {
 
 					errors.Add(1)
 
 					continue
 				}
 
-
-
-				local=append(
+				local = append(
 					local,
 					elapsed,
 				)
 
-
-
-				if found{
+				if found {
 
 					hits.Add(1)
 
-				}else{
+				} else {
 
 					misses.Add(1)
 
@@ -314,199 +243,147 @@ func runBenchmark(
 
 			}
 
-
-
 			mu.Lock()
 
-			latencies=append(
+			latencies = append(
 				latencies,
 				local...,
 			)
 
 			mu.Unlock()
 
-
 		}()
 
 	}
 
+	for _, q := range queries {
 
-
-	for _,q:=range queries{
-
-		queryCh<-q
+		queryCh <- q
 
 	}
-
 
 	close(queryCh)
 
-
-
 	wg.Wait()
 
-
-
-	wall:=time.Since(startWall)
-
-
+	wall := time.Since(startWall)
 
 	slices.Sort(latencies)
 
-
-
 	var total time.Duration
 
-	for _,v:=range latencies{
+	for _, v := range latencies {
 
-		total+=v
-
-	}
-
-
-
-	result:=BenchmarkResult{
-
-		Workers:workers,
-
-		Queries:uint64(len(queries)),
-
-		Hits:hits.Load(),
-		Misses:misses.Load(),
-		Errors:errors.Load(),
-
-		WallTime:wall,
-
-		QPS:
-		float64(len(queries))/wall.Seconds(),
+		total += v
 
 	}
 
+	result := BenchmarkResult{
 
+		Workers: workers,
 
-	if len(latencies)>0{
+		Queries: uint64(len(queries)),
 
+		Hits:   hits.Load(),
+		Misses: misses.Load(),
+		Errors: errors.Load(),
 
-		result.Avg=
-			total/time.Duration(len(latencies))
+		WallTime: wall,
 
+		QPS: float64(len(queries)) / wall.Seconds(),
+	}
 
-		result.P50=
+	if len(latencies) > 0 {
+
+		result.Avg =
+			total / time.Duration(len(latencies))
+
+		result.P50 =
 			percentile(
 				latencies,
 				50,
 			)
 
-
-		result.P95=
+		result.P95 =
 			percentile(
 				latencies,
 				95,
 			)
 
-
-		result.P99=
+		result.P99 =
 			percentile(
 				latencies,
 				99,
 			)
 
-
-		result.Max=
+		result.Max =
 			latencies[len(latencies)-1]
 
 	}
-
-
 
 	return result
 
 }
 
-
-
-
-
 func execute(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	query string,
-)(bool,error){
-
-
+) (bool, error) {
 
 	var id int64
 
-
-
-	err:=pool.QueryRow(
+	err := pool.QueryRow(
 		ctx,
 		querySQL,
 		query,
 	).Scan(&id)
 
-
-
 	if err != nil {
 
-
 		// отсутствие результата
-		if err.Error()=="no rows in result set"{
+		if err.Error() == "no rows in result set" {
 
-			return false,nil
+			return false, nil
 
 		}
 
-
-		return false,err
+		return false, err
 
 	}
 
-
-
-	return true,nil
+	return true, nil
 
 }
-
-
-
-
 
 func percentile(
 	values []time.Duration,
 	p int,
-)time.Duration{
+) time.Duration {
 
-
-	if len(values)==0{
+	if len(values) == 0 {
 		return 0
 	}
 
-
-	idx:=(len(values)-1)*p/100
-
+	idx := (len(values) - 1) * p / 100
 
 	return values[idx]
 
 }
 
-
-
-
 func printMedianResult(
 	results []BenchmarkResult,
-){
-
+) {
 
 	slices.SortFunc(
 		results,
-		func(a,b BenchmarkResult)int{
+		func(a, b BenchmarkResult) int {
 
-			if a.QPS<b.QPS{
+			if a.QPS < b.QPS {
 				return -1
 			}
 
-			if a.QPS>b.QPS{
+			if a.QPS > b.QPS {
 				return 1
 			}
 
@@ -514,11 +391,7 @@ func printMedianResult(
 		},
 	)
 
-
-
-	m:=results[len(results)/2]
-
-
+	m := results[len(results)/2]
 
 	fmt.Println("---- median run ----")
 
@@ -547,7 +420,6 @@ func printMedianResult(
 		m.Errors,
 	)
 
-
 	fmt.Printf(
 		"avg     : %v\n",
 		m.Avg,
@@ -573,12 +445,10 @@ func printMedianResult(
 		m.Max,
 	)
 
-
 	fmt.Printf(
 		"wall    : %v\n",
 		m.WallTime,
 	)
-
 
 	fmt.Printf(
 		"qps     : %.0f\n",
@@ -587,56 +457,42 @@ func printMedianResult(
 
 }
 
-
-
-
 func loadQueries(
 	path string,
-)[]string{
+) []string {
 
+	file, err := os.Open(path)
 
-	file,err:=os.Open(path)
-
-	if err!=nil{
+	if err != nil {
 		log.Fatal(err)
 	}
 
 	defer file.Close()
 
+	rows, err := csv.NewReader(file).ReadAll()
 
-
-	rows,err:=csv.NewReader(file).ReadAll()
-
-	if err!=nil{
+	if err != nil {
 		log.Fatal(err)
 	}
 
-
-
-	result:=make(
+	result := make(
 		[]string,
 		0,
 		len(rows),
 	)
 
+	for _, row := range rows {
 
-
-	for _,row:=range rows{
-
-
-		if len(row)==0{
+		if len(row) == 0 {
 			continue
 		}
 
-
-		result=append(
+		result = append(
 			result,
 			row[0],
 		)
 
 	}
-
-
 
 	return result
 }

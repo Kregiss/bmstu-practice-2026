@@ -19,7 +19,7 @@ import (
 
 const (
 	host = "127.0.0.1"
-	port = 9200
+	port = 9201
 	batchSize = 100
 	warmupCount  = 100
 	runsPerLevel = 3
@@ -30,6 +30,7 @@ var workerConfigs = []int{
 	4,
 	16,
 	64,
+	128,
 }
 
 type BenchmarkResult struct {

@@ -55,7 +55,7 @@ func main() {
 		}
 		query := last + " " + first + " " + middle
 		count_query += 1
-		if (count_query == 1001) {break}
+		if (count_query == 100001) {break}
 		writer.Write([]string{query})
 	}
 	log.Println("Query generated")

@@ -23,4 +23,4 @@ ADD INDEX idx_full_name_text full_name
 TYPE text(tokenizer = 'ngrams', preprocessor = lower(full_name))
 GRANULARITY 1;
 
-ALTER TABLE people MATERIALIZE INDEX idx_ngram;
+ALTER TABLE people MATERIALIZE INDEX idx_full_name_text;

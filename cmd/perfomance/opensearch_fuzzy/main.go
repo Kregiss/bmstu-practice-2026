@@ -2,67 +2,81 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"time"
+
+	"github.com/opensearch-project/opensearch-go/v4"
+	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 )
 
 const (
 	host = "127.0.0.1"
-	port = 9202
+	port = 9203
+	indexName = "people"
+	batchSize = 100
 )
 
-type MultiSearchResponse struct {
-	Responses []struct {
-		Hits struct {
-			Hits []struct {
-				ID string `json:"_id"`
-			} `json:"hits"`
-		} `json:"hits"`
-		Error  json.RawMessage `json:"error,omitempty"`
-		Status int             `json:"status"`
-	} `json:"responses"`
-}
-
-const batchSize = 100
-
 func main() {
-	fmt.Println("Connected to Elasticsearch (Fuzzy Search)")
+	client, err := opensearchapi.NewClient(
+		opensearchapi.Config{
+			Client: opensearch.Config{
+				Addresses: []string{
+					fmt.Sprintf(
+						"http://%s:%d",
+						host,
+						port,
+					),
+				},
+			},
+		},
+	)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Connected to OpenSearch (Fuzzy Search)")
 	queries := loadQueries("data/queries_fuzzy.csv")
+	ctx := context.Background()
 	var (
 		total time.Duration
 		min   time.Duration
 		max   time.Duration
 	)
 	min = time.Hour
-	url := fmt.Sprintf("http://%s:%d/people/_msearch?filter_path=responses.hits.hits._id,responses.error,responses.status", host, port)
-	client := &http.Client{Timeout: 30 * time.Second}
 
 	for batchStart := 0; batchStart < len(queries); batchStart += batchSize {
 		batchEnd := batchStart + batchSize
 		if batchEnd > len(queries) {
 			batchEnd = len(queries)
 		}
-
 		var body bytes.Buffer
+
 		for _, q := range queries[batchStart:batchEnd] {
-			body.WriteString("{}\n")
+			// msearch header
+			body.WriteString(
+				fmt.Sprintf(
+					`{"index":"%s"}`,
+					indexName,
+				),
+			)
+			body.WriteByte('\n')
+
 			query := map[string]interface{}{
-				"size":             1,
-				"_source":          false,
+				"size": 1,
+				"_source": false,
 				"track_total_hits": false,
 				"query": map[string]interface{}{
 					"match": map[string]interface{}{
 						"full_name": map[string]interface{}{
-							"query":          q,
-							"operator":       "and",
-							"fuzziness":      1,
-							"prefix_length":  0,
+							"query": q,
+							"operator": "and",
+							"fuzziness": 1,
+							"prefix_length": 0,
 							"max_expansions": 5,
 						},
 					},
@@ -70,42 +84,28 @@ func main() {
 			}
 
 			payload, err := json.Marshal(query)
-			if err != nil {
-				log.Fatal(err)
-			}
+			if err != nil {log.Fatal(err)}
 			body.Write(payload)
 			body.WriteByte('\n')
 		}
 
-		req, err := http.NewRequest("POST", url, &body)
-		if err != nil {
-			log.Fatal(err)
-		}
-		req.Header.Set("Content-Type", "application/x-ndjson")
-
 		start := time.Now()
-		resp, err := client.Do(req)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			responseBody, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			log.Fatalf("msearch failed: %s: %s", resp.Status, string(responseBody))
-		}
+		resp, err := client.MSearch(
+			ctx,
+			opensearchapi.MSearchReq{
+				Body: bytes.NewReader(
+					body.Bytes(),
+				),
+			},
+		)
+		if err != nil {log.Fatal(err)}
 
-		var result MultiSearchResponse
-		err = json.NewDecoder(resp.Body).Decode(&result)
-		resp.Body.Close()
-		if err != nil {
-			log.Fatal(err)
+		if len(resp.Responses) != batchEnd-batchStart {
+			log.Fatalf("expected %d responses, got %d", batchEnd-batchStart, len(resp.Responses))
 		}
-		if len(result.Responses) != batchEnd-batchStart {
-			log.Fatalf("expected %d responses, got %d", batchEnd-batchStart, len(result.Responses))
-		}
-		for j, item := range result.Responses {
-			if item.Status >= 400 || len(item.Error) > 0 {
-				log.Fatalf("search failed for query %q: status=%d error=%s", queries[batchStart+j], item.Status, string(item.Error))
+		for j, item := range resp.Responses {
+			if item.Error != nil {
+				log.Fatalf("search failed for query %q: %+v", queries[batchStart+j], item.Error)
 			}
 			if len(item.Hits.Hits) == 0 {
 				log.Fatalf("Nothing found for query: %s", queries[batchStart+j])
@@ -114,20 +114,14 @@ func main() {
 
 		elapsed := time.Since(start)
 		total += elapsed
-		perQuery := elapsed / time.Duration(batchEnd-batchStart)
-		if perQuery < min {
-			min = perQuery
-		}
-		if perQuery > max {
-			max = perQuery
-		}
-
+		perQuery :=	elapsed / time.Duration(batchEnd - batchStart)
+		if perQuery < min { min = perQuery }
+		if perQuery > max { max = perQuery }
 		fmt.Printf("%d/%d completed\n", batchEnd, len(queries))
 	}
 
 	qps := float64(len(queries)) / total.Seconds()
 	avg := total / time.Duration(len(queries))
-
 	fmt.Println()
 	fmt.Println("-------------- RESULT --------------")
 	fmt.Printf("Queries : %d\n", len(queries))
@@ -151,8 +145,9 @@ func loadQueries(path string) []string {
 		log.Fatal(err)
 	}
 
-	var queries []string
+	queries := make([]string, 0, len(rows))
 	for _, row := range rows {
+		if len(row) == 0 {continue}
 		queries = append(queries, row[0])
 	}
 	return queries

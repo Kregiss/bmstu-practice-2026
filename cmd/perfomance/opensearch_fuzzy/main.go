@@ -20,13 +20,17 @@ import (
 
 const (
 	host         = "127.0.0.1"
-	port         = 9203
+	port         = 920
 	indexName    = "people"
 	warmupCount  = 100
 	runsPerLevel = 3
 )
 
 var workerConfigs = []int{
+	1,
+	4,
+	16,
+	64,
 	128,
 }
 

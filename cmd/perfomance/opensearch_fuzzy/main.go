@@ -20,7 +20,7 @@ import (
 
 const (
 	host         = "127.0.0.1"
-	port         = 920
+	port         = 9203
 	indexName    = "people"
 	warmupCount  = 100
 	runsPerLevel = 3

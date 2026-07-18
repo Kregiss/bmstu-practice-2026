@@ -12,15 +12,15 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"net/http"
 
-	"github.com/elastic/go-elasticsearch/v8"
-	"github.com/elastic/go-elasticsearch/v8/esapi"
+	"github.com/elastic/go-elasticsearch/v9"
 )
 
 const (
 	host = "127.0.0.1"
 	port = 9201
-	batchSize = 100
+	//batchSize = 100
 	warmupCount  = 100
 	runsPerLevel = 3
 )
@@ -30,6 +30,7 @@ var workerConfigs = []int{
 	4,
 	16,
 	64,
+	128,
 }
 
 type BenchmarkResult struct {
@@ -67,6 +68,16 @@ type MultiSearchResponse struct {
 }
 
 func main() {
+	transport := &http.Transport{
+		MaxIdleConns:        200,
+		MaxIdleConnsPerHost: 200,
+		MaxConnsPerHost:     200,
+
+		IdleConnTimeout: 90 * time.Second,
+
+		TLSHandshakeTimeout: 10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+	}
 	es, err := elasticsearch.NewClient(
 		elasticsearch.Config{
 			Addresses: []string{
@@ -76,6 +87,8 @@ func main() {
 					port,
 				),
 			},
+
+			Transport: transport,
 		},
 	)
 	if err != nil {
@@ -93,10 +106,12 @@ func main() {
 		"data/queries.csv",
 	)
 	fmt.Println("warmup...")
+	ctx := context.Background()
 	for i := 0; i < warmupCount && i < len(queries); i++ {
-		_, _ = executeBatch(
+		_, _ = execute(
+			ctx,
 			es,
-			queries[i:i+1],
+			queries[i],
 		)
 	}
 
@@ -110,6 +125,7 @@ func main() {
 
 		for run := 1; run <= runsPerLevel; run++ {
 			result := runBenchmark(
+				ctx,
 				es,
 				queries,
 				workers,
@@ -136,13 +152,12 @@ func main() {
 }
 
 func runBenchmark(
+	ctx context.Context,
 	es *elasticsearch.Client,
 	queries []string,
 	workers int,
 ) BenchmarkResult {
-	queryCh := make(
-		chan []string,
-	)
+	queryCh := make(chan string)
 	var wg sync.WaitGroup
 	var (
 		totalHits atomic.Uint64
@@ -159,32 +174,30 @@ func runBenchmark(
 		go func(){
 			defer wg.Done()
 			var local []time.Duration
-			for batch := range queryCh {
+			
+			for q := range queryCh {
+
 				start := time.Now()
-				hits, err := executeBatch(
+
+				found, err := execute(
+					ctx,
 					es,
-					batch,
+					q,
 				)
+
 				elapsed := time.Since(start)
+
+				local = append(local, elapsed)
+
 				if err != nil {
-					totalErr.Add(
-						uint64(len(batch)),
-					)
+					totalErr.Add(1)
 					continue
 				}
-				local = append(
-					local,
-					elapsed / time.Duration(len(batch)),
-				)
-				if hits {
 
-					totalHits.Add(
-						uint64(len(batch)),
-					)
+				if found {
+					totalHits.Add(1)
 				} else {
-					totalMiss.Add(
-						uint64(len(batch)),
-					)
+					totalMiss.Add(1)
 				}
 			}
 			mu.Lock()
@@ -195,12 +208,8 @@ func runBenchmark(
 			mu.Unlock()
 		}()
 	}
-	for i:=0;i<len(queries);i+=batchSize {
-		end:=i+batchSize
-		if end>len(queries){
-			end=len(queries)
-		}
-		queryCh <- queries[i:end]
+	for _, q := range queries {
+		queryCh <- q
 	}
 	close(queryCh)
 	wg.Wait()
@@ -239,76 +248,61 @@ func runBenchmark(
 	return result
 }
 
-func executeBatch(
-	es *elasticsearch.Client,
-	queries []string,
-)(bool,error){
-	var body bytes.Buffer
-	for _,q:=range queries{
-		body.WriteString("{}\n")
-		query:=map[string]interface{}{
-			"size":1,
-			"_source":false,
-			"track_total_hits":false,
-			"query":map[string]interface{}{
-				"match":map[string]interface{}{
-					"full_name":map[string]interface{}{
-						"query":q,
-						"operator": "and",
-						"fuzziness": 1,
-						"prefix_length": 0,
-						"max_expansions": 5,
-					},
-				},
-			},
-		}
-		data,_:=json.Marshal(query)
-		body.Write(data)
-		body.WriteByte('\n')
-	}
+func execute(
+    ctx context.Context,
+    es *elasticsearch.Client,
+    query string,
+) (bool, error) {
 
-	req:=esapi.MsearchRequest{
-		Index:[]string{"people"},
-		Body:&body,
-	}
-	resp,err:=req.Do(
-		context.Background(),
-		es,
-	)
+    body := map[string]any{
+        "size":             1,
+        "_source":          false,
+        "track_total_hits": false,
+        "query": map[string]any{
+            "match": map[string]any{
+                "full_name": map[string]any{
+                    "query":          query,
+                    "operator":       "and",
+                    "fuzziness":      1,
+                    "prefix_length":  0,
+                    "max_expansions": 5,
+                },
+            },
+        },
+    }
 
-	if err!=nil{
-		return false,err
-	}
+    var buf bytes.Buffer
 
-	defer resp.Body.Close()
-	if resp.IsError(){
-		return false,
-			fmt.Errorf(
-				"msearch error: %s",
-				resp.Status(),
-			)
-	}
+    if err := json.NewEncoder(&buf).Encode(body); err != nil {
+        return false, err
+    }
 
-	var result MultiSearchResponse
-	err=json.NewDecoder(resp.Body).
-		Decode(&result)
-	if err!=nil{
-		return false,err
-	}
+    resp, err := es.Search(
+        es.Search.WithContext(ctx),
+        es.Search.WithIndex("people"),
+        es.Search.WithBody(&buf),
+    )
 
-	for _,item:=range result.Responses{
-		if item.Status>=400 ||
-			len(item.Error)>0{
-			return false,
-				fmt.Errorf(
-					"search error",
-				)
-		}
-		if len(item.Hits.Hits)==0{
-			return false,nil
-		}
-	}
-	return true,nil
+    if err != nil {
+        return false, err
+    }
+    defer resp.Body.Close()
+
+    if resp.IsError() {
+        return false, fmt.Errorf("search error: %s", resp.Status())
+    }
+
+    var result struct {
+        Hits struct {
+            Hits []json.RawMessage `json:"hits"`
+        } `json:"hits"`
+    }
+
+    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+        return false, err
+    }
+
+    return len(result.Hits.Hits) > 0, nil
 }
 
 func percentile(

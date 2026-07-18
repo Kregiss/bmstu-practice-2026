@@ -23,8 +23,6 @@ const (
 )
 
 var workerConfigs = []int{
-	1,
-	4,
 	16,
 	64,
 	128,
@@ -223,9 +221,15 @@ func execute(
 		ctx,
 		`
 		SELECT id
-		FROM people
-		WHERE ngramDistanceUTF8(full_name, ?) <= 0.45
-		ORDER BY ngramDistanceUTF8(full_name, ?)
+		FROM
+		(
+			SELECT
+				id,
+				ngramDistanceUTF8(full_name, ?) AS dist
+			FROM people
+		)
+		WHERE dist <= 0.45
+		ORDER BY dist
 		LIMIT 1
 		`,
 		q,

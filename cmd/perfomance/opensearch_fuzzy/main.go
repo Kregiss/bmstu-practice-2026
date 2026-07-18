@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"net/http"
 
 	"github.com/opensearch-project/opensearch-go/v4"
 	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
@@ -21,16 +22,11 @@ const (
 	host         = "127.0.0.1"
 	port         = 9203
 	indexName    = "people"
-	batchSize    = 100
 	warmupCount  = 100
 	runsPerLevel = 3
 )
 
 var workerConfigs = []int{
-	1,
-	4,
-	16,
-	64,
 	128,
 }
 
@@ -55,20 +51,18 @@ type BenchmarkResult struct {
 	QPS      float64
 }
 
-type MultiSearchResponse struct {
-	Responses []struct {
-		Hits struct {
-			Hits []struct {
-				ID string `json:"_id"`
-			} `json:"hits"`
-		} `json:"hits"`
-
-		Error  json.RawMessage `json:"error,omitempty"`
-		Status int             `json:"status"`
-	} `json:"responses"`
-}
-
 func main() {
+	transport := &http.Transport{
+		MaxIdleConns:        200,
+		MaxIdleConnsPerHost: 200,
+		MaxConnsPerHost:     200,
+
+		IdleConnTimeout: 90 * time.Second,
+
+		TLSHandshakeTimeout: 10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+	}
+
 	client, err := opensearchapi.NewClient(
 		opensearchapi.Config{
 			Client: opensearch.Config{
@@ -79,6 +73,8 @@ func main() {
 						port,
 					),
 				},
+
+				Transport: transport,
 			},
 		},
 	)
@@ -95,10 +91,10 @@ func main() {
 	fmt.Println("warmup...")
 
 	for i := 0; i < warmupCount && i < len(queries); i++ {
-		_, _ = executeBatch(
+		_, _ = execute(
 			client,
 			ctx,
-			queries[i:i+1],
+			queries[i],
 		)
 	}
 
@@ -153,7 +149,7 @@ func runBenchmark(
 	workers int,
 ) BenchmarkResult {
 
-	queryCh := make(chan []string)
+	queryCh := make(chan string)
 
 	var wg sync.WaitGroup
 
@@ -184,38 +180,33 @@ func runBenchmark(
 				len(queries)/workers+1,
 			)
 
-			for batch := range queryCh {
+			for q := range queryCh {
 
 				start := time.Now()
 
-				found, err := executeBatch(
+				found, err := execute(
 					client,
 					ctx,
-					batch,
+					q,
 				)
 
 				elapsed := time.Since(start)
 
+				local = append(
+					local,
+					elapsed,
+				)
+
 				if err != nil {
-					errs.Add(
-						uint64(len(batch)),
-					)
+					errs.Add(1)
+					fmt.Println("ERROR:", err)
 					continue
 				}
 
-				local = append(
-					local,
-					elapsed/time.Duration(len(batch)),
-				)
-
 				if found {
-					hits.Add(
-						uint64(len(batch)),
-					)
+					hits.Add(1)
 				} else {
-					misses.Add(
-						uint64(len(batch)),
-					)
+					misses.Add(1)
 				}
 			}
 
@@ -228,15 +219,8 @@ func runBenchmark(
 		}()
 	}
 
-	for i := 0; i < len(queries); i += batchSize {
-
-		end := i + batchSize
-
-		if end > len(queries) {
-			end = len(queries)
-		}
-
-		queryCh <- queries[i:end]
+	for _, q := range queries {
+		queryCh <- q
 	}
 
 	close(queryCh)
@@ -271,69 +255,50 @@ func runBenchmark(
 		total += v
 	}
 
-	result.Avg =
-		total / time.Duration(len(latencies))
-
-	result.P50 =
-		percentile(latencies, 50)
-
-	result.P95 =
-		percentile(latencies, 95)
-
-	result.P99 =
-		percentile(latencies, 99)
-
-	result.Max =
-		latencies[len(latencies)-1]
-
+	result.Avg =total / time.Duration(len(latencies))
+	result.P50 =percentile(latencies, 50)
+	result.P95 =percentile(latencies, 95)
+	result.P99 =percentile(latencies, 99)
+	result.Max =latencies[len(latencies)-1]
 	return result
 }
 
-func executeBatch(
+func execute(
 	client *opensearchapi.Client,
 	ctx context.Context,
-	queries []string,
+	q string,
 ) (bool, error) {
 
-	var body bytes.Buffer
-
-	for _, q := range queries {
-
-		body.WriteString("{}\n")
-
-		query := map[string]interface{}{
-			"size": 1,
-			"_source": false,
-			"track_total_hits": false,
-			"query": map[string]interface{}{
-				"match": map[string]interface{}{
-					"full_name": map[string]interface{}{
-						"query": q,
-						"operator": "and",
-						"fuzziness": 1,
-						"prefix_length": 0,
-						"max_expansions": 5,
-					},
+	body := map[string]interface{}{
+		"size": 1,
+		"_source": false,
+		"track_total_hits": false,
+		"query": map[string]interface{}{
+			"match": map[string]interface{}{
+				"full_name": map[string]interface{}{
+					"query": q,
+					"operator": "and",
+					"fuzziness": 1,
+					"prefix_length": 0,
 				},
 			},
-		}
-
-		data, err := json.Marshal(query)
-		if err != nil {
-			return false, err
-		}
-
-		body.Write(data)
-		body.WriteByte('\n')
+		},
 	}
 
-	resp, err := client.MSearch(
+	var buf bytes.Buffer
+
+	err := json.NewEncoder(&buf).Encode(body)
+	if err != nil {
+		return false, err
+	}
+
+	resp, err := client.Search(
 		ctx,
-		opensearchapi.MSearchReq{
+		&opensearchapi.SearchReq{
 			Indices: []string{
 				indexName,
 			},
-			Body: bytes.NewReader(body.Bytes()),
+			Body: &buf,
 		},
 	)
 
@@ -341,23 +306,15 @@ func executeBatch(
 		return false, err
 	}
 
-	if len(resp.Responses) != len(queries) {
-		return false, fmt.Errorf("unexpected response count")
+	if resp.Errors {
+		return false, fmt.Errorf(
+			"search returned errors",
+		)
 	}
 
-	for _, item := range resp.Responses {
-
-		if item.Error != nil {
-			return false, fmt.Errorf("%v", item.Error)
-		}
-
-		if len(item.Hits.Hits) == 0 {
-			return false, nil
-		}
-	}
-
-	return true, nil
+	return len(resp.Hits.Hits) > 0, nil
 }
+
 func printMedianResult(
 	results []BenchmarkResult,
 ) {

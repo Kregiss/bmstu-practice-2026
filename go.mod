@@ -5,6 +5,7 @@ go 1.25.9
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.47.0
 	github.com/elastic/go-elasticsearch/v8 v8.19.6
+	github.com/elastic/go-elasticsearch/v9 v9.4.2
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/opensearch-project/opensearch-go/v4 v4.7.1
 )

@@ -10,8 +10,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"errors"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -79,7 +81,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	config.MaxConns = 64
+	config.MaxConns = 128
 	config.MinConns = 4
 
 	pool, err := pgxpool.NewWithConfig(
@@ -266,7 +268,7 @@ func execute(
 		query,
 	).Scan(&id)
 	if err != nil {
-		if err.Error() == "no rows in result set" {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil
 		}
 		return false, err

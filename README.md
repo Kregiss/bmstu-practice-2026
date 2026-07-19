@@ -8,4 +8,3 @@
     * ```go run .\cmd\elastic_loader\main.go -port 9200```
     * ```go run .\cmd\elastic_loader\main.go -port 9201```
 4. запускать по очереди файлы из .\cmd\perfomance\...
-

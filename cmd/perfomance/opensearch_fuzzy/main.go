@@ -2,140 +2,373 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
+	"slices"
+	"sync"
+	"sync/atomic"
 	"time"
+	"net/http"
+
+	"github.com/opensearch-project/opensearch-go/v4"
+	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 )
 
 const (
-	host = "127.0.0.1"
-	port = 9202
+	host         = "127.0.0.1"
+	port         = 9203
+	indexName    = "people"
+	warmupCount  = 100
+	runsPerLevel = 3
 )
 
-type MultiSearchResponse struct {
-	Responses []struct {
-		Hits struct {
-			Hits []struct {
-				ID string `json:"_id"`
-			} `json:"hits"`
-		} `json:"hits"`
-		Error  json.RawMessage `json:"error,omitempty"`
-		Status int             `json:"status"`
-	} `json:"responses"`
+var workerConfigs = []int{
+	1,
+	4,
+	16,
+	64,
+	128,
 }
 
-const batchSize = 100
+type BenchmarkResult struct {
+	Workers int
+
+	Queries uint64
+
+	Hits   uint64
+	Misses uint64
+	Errors uint64
+
+	Avg time.Duration
+
+	P50 time.Duration
+	P95 time.Duration
+	P99 time.Duration
+
+	Max time.Duration
+
+	WallTime time.Duration
+	QPS      float64
+}
 
 func main() {
-	fmt.Println("Connected to Elasticsearch (Fuzzy Search)")
-	queries := loadQueries("data/queries_fuzzy.csv")
-	var (
-		total time.Duration
-		min   time.Duration
-		max   time.Duration
-	)
-	min = time.Hour
-	url := fmt.Sprintf("http://%s:%d/people/_msearch?filter_path=responses.hits.hits._id,responses.error,responses.status", host, port)
-	client := &http.Client{Timeout: 30 * time.Second}
+	transport := &http.Transport{
+		MaxIdleConns:        200,
+		MaxIdleConnsPerHost: 200,
+		MaxConnsPerHost:     200,
 
-	for batchStart := 0; batchStart < len(queries); batchStart += batchSize {
-		batchEnd := batchStart + batchSize
-		if batchEnd > len(queries) {
-			batchEnd = len(queries)
-		}
+		IdleConnTimeout: 90 * time.Second,
 
-		var body bytes.Buffer
-		for _, q := range queries[batchStart:batchEnd] {
-			body.WriteString("{}\n")
-			query := map[string]interface{}{
-				"size":             1,
-				"_source":          false,
-				"track_total_hits": false,
-				"query": map[string]interface{}{
-					"match": map[string]interface{}{
-						"full_name": map[string]interface{}{
-							"query":          q,
-							"operator":       "and",
-							"fuzziness":      "AUTO",
-							"prefix_length":  0,
-							"max_expansions": 20,
-						},
-					},
-				},
-			}
-
-			payload, err := json.Marshal(query)
-			if err != nil {
-				log.Fatal(err)
-			}
-			body.Write(payload)
-			body.WriteByte('\n')
-		}
-
-		req, err := http.NewRequest("POST", url, &body)
-		if err != nil {
-			log.Fatal(err)
-		}
-		req.Header.Set("Content-Type", "application/x-ndjson")
-
-		start := time.Now()
-		resp, err := client.Do(req)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			responseBody, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			log.Fatalf("msearch failed: %s: %s", resp.Status, string(responseBody))
-		}
-
-		var result MultiSearchResponse
-		err = json.NewDecoder(resp.Body).Decode(&result)
-		resp.Body.Close()
-		if err != nil {
-			log.Fatal(err)
-		}
-		if len(result.Responses) != batchEnd-batchStart {
-			log.Fatalf("expected %d responses, got %d", batchEnd-batchStart, len(result.Responses))
-		}
-		for j, item := range result.Responses {
-			if item.Status >= 400 || len(item.Error) > 0 {
-				log.Fatalf("search failed for query %q: status=%d error=%s", queries[batchStart+j], item.Status, string(item.Error))
-			}
-			if len(item.Hits.Hits) == 0 {
-				log.Fatalf("Nothing found for query: %s", queries[batchStart+j])
-			}
-		}
-
-		elapsed := time.Since(start)
-		total += elapsed
-		perQuery := elapsed / time.Duration(batchEnd-batchStart)
-		if perQuery < min {
-			min = perQuery
-		}
-		if perQuery > max {
-			max = perQuery
-		}
-
-		fmt.Printf("%d/%d completed\n", batchEnd, len(queries))
+		TLSHandshakeTimeout: 10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
 	}
 
-	qps := float64(len(queries)) / total.Seconds()
-	avg := total / time.Duration(len(queries))
+	client, err := opensearchapi.NewClient(
+		opensearchapi.Config{
+			Client: opensearch.Config{
+				Addresses: []string{
+					fmt.Sprintf(
+						"http://%s:%d",
+						host,
+						port,
+					),
+				},
+
+				Transport: transport,
+			},
+		},
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	fmt.Println("Connected to OpenSearch")
+
+	queries := loadQueries("data/queries.csv")
+
+	fmt.Println("warmup...")
+
+	for i := 0; i < warmupCount && i < len(queries); i++ {
+		_, _ = execute(
+			client,
+			ctx,
+			queries[i],
+		)
+	}
 
 	fmt.Println()
-	fmt.Println("-------------- RESULT --------------")
-	fmt.Printf("Queries : %d\n", len(queries))
-	fmt.Printf("Average : %v\n", avg)
-	fmt.Printf("Minimum : %v\n", min)
-	fmt.Printf("Maximum : %v\n", max)
-	fmt.Printf("Total : %v\n", total)
-	fmt.Printf("QPS : %v\n", qps)
+
+	for _, workers := range workerConfigs {
+
+		fmt.Printf(
+			"========== %d workers ==========\n",
+			workers,
+		)
+
+		var runs []BenchmarkResult
+
+		for run := 1; run <= runsPerLevel; run++ {
+
+			result := runBenchmark(
+				client,
+				ctx,
+				queries,
+				workers,
+			)
+
+			runs = append(
+				runs,
+				result,
+			)
+
+			fmt.Printf(
+				"run=%d workers=%d qps=%.0f avg=%v p50=%v p95=%v p99=%v errors=%d\n",
+				run,
+				result.Workers,
+				result.QPS,
+				result.Avg,
+				result.P50,
+				result.P95,
+				result.P99,
+				result.Errors,
+			)
+		}
+
+		printMedianResult(runs)
+
+		fmt.Println()
+	}
+}
+
+func runBenchmark(
+	client *opensearchapi.Client,
+	ctx context.Context,
+	queries []string,
+	workers int,
+) BenchmarkResult {
+
+	queryCh := make(chan string)
+
+	var wg sync.WaitGroup
+
+	var (
+		hits   atomic.Uint64
+		misses atomic.Uint64
+		errs   atomic.Uint64
+	)
+
+	var (
+		mu        sync.Mutex
+		latencies []time.Duration
+	)
+
+	startWall := time.Now()
+
+	for i := 0; i < workers; i++ {
+
+		wg.Add(1)
+
+		go func() {
+
+			defer wg.Done()
+
+			local := make(
+				[]time.Duration,
+				0,
+				len(queries)/workers+1,
+			)
+
+			for q := range queryCh {
+
+				start := time.Now()
+
+				found, err := execute(
+					client,
+					ctx,
+					q,
+				)
+
+				elapsed := time.Since(start)
+
+				local = append(
+					local,
+					elapsed,
+				)
+
+				if err != nil {
+					errs.Add(1)
+					fmt.Println("ERROR:", err)
+					continue
+				}
+
+				if found {
+					hits.Add(1)
+				} else {
+					misses.Add(1)
+				}
+			}
+
+			mu.Lock()
+			latencies = append(
+				latencies,
+				local...,
+			)
+			mu.Unlock()
+		}()
+	}
+
+	for _, q := range queries {
+		queryCh <- q
+	}
+
+	close(queryCh)
+
+	wg.Wait()
+
+	wall := time.Since(startWall)
+
+	result := BenchmarkResult{
+		Workers: workers,
+
+		Queries: uint64(len(queries)),
+
+		Hits:   hits.Load(),
+		Misses: misses.Load(),
+		Errors: errs.Load(),
+
+		WallTime: wall,
+
+		QPS: float64(len(queries)) / wall.Seconds(),
+	}
+
+	if len(latencies) == 0 {
+		return result
+	}
+
+	slices.Sort(latencies)
+
+	var total time.Duration
+
+	for _, v := range latencies {
+		total += v
+	}
+
+	result.Avg =total / time.Duration(len(latencies))
+	result.P50 =percentile(latencies, 50)
+	result.P95 =percentile(latencies, 95)
+	result.P99 =percentile(latencies, 99)
+	result.Max =latencies[len(latencies)-1]
+	return result
+}
+
+func execute(
+	client *opensearchapi.Client,
+	ctx context.Context,
+	q string,
+) (bool, error) {
+
+	body := map[string]interface{}{
+		"size": 1,
+		"_source": false,
+		"track_total_hits": false,
+		"query": map[string]interface{}{
+			"match": map[string]interface{}{
+				"full_name": map[string]interface{}{
+					"query": q,
+					"operator": "and",
+					"fuzziness": 1,
+					"prefix_length": 0,
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+
+	err := json.NewEncoder(&buf).Encode(body)
+	if err != nil {
+		return false, err
+	}
+
+	resp, err := client.Search(
+		ctx,
+		&opensearchapi.SearchReq{
+			Indices: []string{
+				indexName,
+			},
+			Body: &buf,
+		},
+	)
+
+	if err != nil {
+		return false, err
+	}
+
+	if resp.Errors {
+		return false, fmt.Errorf(
+			"search returned errors",
+		)
+	}
+
+	return len(resp.Hits.Hits) > 0, nil
+}
+
+func printMedianResult(
+	results []BenchmarkResult,
+) {
+	if len(results) == 0 {
+		return
+	}
+
+	slices.SortFunc(
+		results,
+		func(a, b BenchmarkResult) int {
+			if a.QPS < b.QPS {
+				return -1
+			}
+			if a.QPS > b.QPS {
+				return 1
+			}
+			return 0
+		},
+	)
+
+	mid := results[len(results)/2]
+
+	fmt.Println("---- median run ----")
+
+	fmt.Printf("workers : %d\n", mid.Workers)
+	fmt.Printf("queries : %d\n", mid.Queries)
+	fmt.Printf("hits    : %d\n", mid.Hits)
+	fmt.Printf("misses  : %d\n", mid.Misses)
+	fmt.Printf("errors  : %d\n", mid.Errors)
+
+	fmt.Printf("avg     : %v\n", mid.Avg)
+	fmt.Printf("p50     : %v\n", mid.P50)
+	fmt.Printf("p95     : %v\n", mid.P95)
+	fmt.Printf("p99     : %v\n", mid.P99)
+	fmt.Printf("max     : %v\n", mid.Max)
+
+	fmt.Printf("wall    : %v\n", mid.WallTime)
+	fmt.Printf("qps     : %.0f\n", mid.QPS)
+}
+
+func percentile(
+	values []time.Duration,
+	p int,
+) time.Duration {
+	if len(values) == 0 {
+		return 0
+	}
+
+	idx := (len(values) - 1) * p / 100
+	return values[idx]
 }
 
 func loadQueries(path string) []string {
@@ -145,15 +378,20 @@ func loadQueries(path string) []string {
 	}
 	defer file.Close()
 
-	reader := csv.NewReader(file)
-	rows, err := reader.ReadAll()
+	rows, err := csv.NewReader(file).ReadAll()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	var queries []string
+	result := make([]string, 0, len(rows))
+
 	for _, row := range rows {
-		queries = append(queries, row[0])
+		if len(row) == 0 {
+			continue
+		}
+
+		result = append(result, row[0])
 	}
-	return queries
+
+	return result
 }

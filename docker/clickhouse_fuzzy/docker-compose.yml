@@ -8,3 +8,4 @@ services:
     volumes:
       - ../../data/people.csv:/var/lib/clickhouse/user_files/people.csv
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./users.xml:/etc/clickhouse-server/users.xml

@@ -22,7 +22,6 @@ const (
 	host         = "127.0.0.1"
 	port         = 9202
 	indexName    = "people"
-	//batchSize    = 100
 	warmupCount  = 100
 	runsPerLevel = 3
 )

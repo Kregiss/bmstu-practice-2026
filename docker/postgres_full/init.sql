@@ -10,6 +10,6 @@ COPY people (id,last_name,first_name,middle_name)
   FROM '/docker-entrypoint-initdb.d/people.csv' WITH CSV;
 
 CREATE INDEX idx_people_fts
-  ON people USING GIN (to_tsvector('russian', full_name));
+  ON people USING GIN (to_tsvector('simple', full_name));
 
 ANALYZE people;

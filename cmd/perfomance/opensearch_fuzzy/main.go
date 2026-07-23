@@ -282,7 +282,7 @@ func execute(
 				"full_name": map[string]interface{}{
 					"query": q,
 					"operator": "and",
-					"fuzziness": 1,
+					"fuzziness": "auto",
 					"prefix_length": 0,
 				},
 			},

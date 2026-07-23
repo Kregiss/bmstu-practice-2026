@@ -7,19 +7,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
-	"net/http"
 
 	"github.com/elastic/go-elasticsearch/v9"
 )
 
 const (
-	host = "127.0.0.1"
-	port = 9201
+	host         = "127.0.0.1"
+	port         = 9201
 	warmupCount  = 100
 	runsPerLevel = 3
 )
@@ -49,9 +49,8 @@ type BenchmarkResult struct {
 	Max time.Duration
 
 	WallTime time.Duration
-	QPS float64
+	QPS      float64
 }
-
 
 type MultiSearchResponse struct {
 	Responses []struct {
@@ -61,8 +60,8 @@ type MultiSearchResponse struct {
 			} `json:"hits"`
 		} `json:"hits"`
 
-		Error json.RawMessage `json:"error,omitempty"`
-		Status int `json:"status"`
+		Error  json.RawMessage `json:"error,omitempty"`
+		Status int             `json:"status"`
 	} `json:"responses"`
 }
 
@@ -74,7 +73,7 @@ func main() {
 
 		IdleConnTimeout: 90 * time.Second,
 
-		TLSHandshakeTimeout: 10 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 	}
 	es, err := elasticsearch.NewClient(
@@ -161,19 +160,19 @@ func runBenchmark(
 	var (
 		totalHits atomic.Uint64
 		totalMiss atomic.Uint64
-		totalErr atomic.Uint64
+		totalErr  atomic.Uint64
 	)
 	var (
-		mu sync.Mutex
+		mu        sync.Mutex
 		latencies []time.Duration
 	)
 	startWall := time.Now()
-	for i:=0;i<workers;i++ {
+	for i := 0; i < workers; i++ {
 		wg.Add(1)
-		go func(){
+		go func() {
 			defer wg.Done()
 			var local []time.Duration
-			
+
 			for q := range queryCh {
 
 				start := time.Now()
@@ -215,32 +214,32 @@ func runBenchmark(
 	wall := time.Since(startWall)
 	slices.Sort(latencies)
 	var total time.Duration
-	for _,v:=range latencies{
-		total+=v
+	for _, v := range latencies {
+		total += v
 	}
-	result:=BenchmarkResult{
+	result := BenchmarkResult{
 		Workers: workers,
 
-		Queries:uint64(len(queries)),
+		Queries: uint64(len(queries)),
 
-		Hits:totalHits.Load(),
-		Misses:totalMiss.Load(),
-		Errors:totalErr.Load(),
+		Hits:   totalHits.Load(),
+		Misses: totalMiss.Load(),
+		Errors: totalErr.Load(),
 
-		WallTime:wall,
+		WallTime: wall,
 
-		QPS:float64(len(queries))/wall.Seconds(),
+		QPS: float64(len(queries)) / wall.Seconds(),
 	}
 
-	if len(latencies)>0 {
+	if len(latencies) > 0 {
 		result.Avg =
-			total/time.Duration(len(latencies))
+			total / time.Duration(len(latencies))
 		result.P50 =
-			percentile(latencies,50)
+			percentile(latencies, 50)
 		result.P95 =
-			percentile(latencies,95)
+			percentile(latencies, 95)
 		result.P99 =
-			percentile(latencies,99)
+			percentile(latencies, 99)
 		result.Max =
 			latencies[len(latencies)-1]
 	}
@@ -248,89 +247,89 @@ func runBenchmark(
 }
 
 func execute(
-    ctx context.Context,
-    es *elasticsearch.Client,
-    query string,
+	ctx context.Context,
+	es *elasticsearch.Client,
+	query string,
 ) (bool, error) {
 
-    body := map[string]any{
-        "size":             1,
-        "_source":          false,
-        "track_total_hits": false,
-        "query": map[string]any{
-            "match": map[string]any{
-                "full_name": map[string]any{
-                    "query":          query,
-                    "operator":       "and",
-                    "fuzziness":      1,
-                    "prefix_length":  0,
-                    "max_expansions": 5,
-                },
-            },
-        },
-    }
+	body := map[string]any{
+		"size":             1,
+		"_source":          false,
+		"track_total_hits": false,
+		"query": map[string]any{
+			"match": map[string]any{
+				"full_name": map[string]any{
+					"query":          query,
+					"operator":       "and",
+					"fuzziness":      "AUTO",
+					"prefix_length":  0,
+					"max_expansions": 5,
+				},
+			},
+		},
+	}
 
-    var buf bytes.Buffer
+	var buf bytes.Buffer
 
-    if err := json.NewEncoder(&buf).Encode(body); err != nil {
-        return false, err
-    }
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		return false, err
+	}
 
-    resp, err := es.Search(
-        es.Search.WithContext(ctx),
-        es.Search.WithIndex("people"),
-        es.Search.WithBody(&buf),
-    )
+	resp, err := es.Search(
+		es.Search.WithContext(ctx),
+		es.Search.WithIndex("people"),
+		es.Search.WithBody(&buf),
+	)
 
-    if err != nil {
-        return false, err
-    }
-    defer resp.Body.Close()
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
 
-    if resp.IsError() {
-        return false, fmt.Errorf("search error: %s", resp.Status())
-    }
+	if resp.IsError() {
+		return false, fmt.Errorf("search error: %s", resp.Status())
+	}
 
-    var result struct {
-        Hits struct {
-            Hits []json.RawMessage `json:"hits"`
-        } `json:"hits"`
-    }
+	var result struct {
+		Hits struct {
+			Hits []json.RawMessage `json:"hits"`
+		} `json:"hits"`
+	}
 
-    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-        return false, err
-    }
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, err
+	}
 
-    return len(result.Hits.Hits) > 0, nil
+	return len(result.Hits.Hits) > 0, nil
 }
 
 func percentile(
 	values []time.Duration,
 	p int,
-)time.Duration{
-	if len(values)==0{
+) time.Duration {
+	if len(values) == 0 {
 		return 0
 	}
-	idx:=(len(values)-1)*p/100
+	idx := (len(values) - 1) * p / 100
 	return values[idx]
 }
 
 func printMedianResult(
 	results []BenchmarkResult,
-){
+) {
 	slices.SortFunc(
 		results,
-		func(a,b BenchmarkResult)int{
-			if a.QPS<b.QPS{
+		func(a, b BenchmarkResult) int {
+			if a.QPS < b.QPS {
 				return -1
 			}
-			if a.QPS>b.QPS{
+			if a.QPS > b.QPS {
 				return 1
 			}
 			return 0
 		},
 	)
-	m:=results[len(results)/2]
+	m := results[len(results)/2]
 	fmt.Println("---- median run ----")
 
 	fmt.Printf("workers : %d\n", m.Workers)
@@ -349,24 +348,24 @@ func printMedianResult(
 	fmt.Printf("qps     : %.0f\n", m.QPS)
 }
 
-func loadQueries(path string)[]string{
-	file,err:=os.Open(path)
-	if err!=nil{
+func loadQueries(path string) []string {
+	file, err := os.Open(path)
+	if err != nil {
 		log.Fatal(err)
 	}
 	defer file.Close()
 
-	rows,err:=csv.NewReader(file).ReadAll()
-	if err!=nil{
+	rows, err := csv.NewReader(file).ReadAll()
+	if err != nil {
 		log.Fatal(err)
 	}
-	result:=make([]string,0,len(rows))
+	result := make([]string, 0, len(rows))
 
-	for _,row:=range rows{
-		if len(row)==0{
+	for _, row := range rows {
+		if len(row) == 0 {
 			continue
 		}
-		result=append(
+		result = append(
 			result,
 			row[0],
 		)

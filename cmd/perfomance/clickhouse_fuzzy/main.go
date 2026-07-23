@@ -91,9 +91,9 @@ func main() {
 
 		for run := 1; run <= runsPerLevel; run++ {
 			result := runBenchmark(
-				ctx, 
-				conn, 
-				queries, 
+				ctx,
+				conn,
+				queries,
 				workers,
 			)
 
@@ -222,17 +222,34 @@ func execute(
 	err := conn.QueryRow(
 		ctx,
 		`
-		SELECT id
+		WITH candidates AS
+		(
+			SELECT
+				id,
+				full_name
+			FROM people
+			WHERE hasAnyTokens(
+				full_name,
+				tokens(
+					normalizeUTF8NFKCCasefold(?),
+					'ngrams',
+					3
+				)
+			)
+		)
+
+		SELECT
+			id
 		FROM
 		(
 			SELECT
 				id,
-				ngramDistanceUTF8(full_name, ?) AS dist
-			FROM people
+				ngramDistanceCaseInsensitiveUTF8(full_name, ?) AS dist
+			FROM candidates
 		)
-		WHERE dist <= 0.45
+		WHERE dist < 0.45
 		ORDER BY dist
-		LIMIT 1
+		LIMIT 1;
 		`,
 		q,
 		q,

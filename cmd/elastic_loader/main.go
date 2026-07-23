@@ -33,7 +33,7 @@ var client *elasticsearch.Client
 func main() {
 	port := flag.String(
 		"port",
-		"9201",
+		"9200",
 		"Elasticsearch port",
 	)
 

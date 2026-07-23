@@ -189,9 +189,9 @@ func runBenchmark(
 
 	if len(latencies) == 0 {
 		return BenchmarkResult{
-			Workers: workers,
-			Queries: uint64(len(queries)),
-			Errors:  errs.Load(),
+			Workers:  workers,
+			Queries:  uint64(len(queries)),
+			Errors:   errs.Load(),
 			WallTime: wallTime,
 		}
 	}
@@ -322,7 +322,9 @@ func loadQueries(path string) []string {
 	}
 	result := make([]string, 0, len(rows))
 	for _, row := range rows {
-		if len(row) == 0 {continue}
+		if len(row) == 0 {
+			continue
+		}
 		result = append(result, row[0])
 	}
 	return result

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -10,10 +11,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"errors"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -60,8 +60,8 @@ type BenchmarkResult struct {
 const querySQL = `
 SELECT id
 FROM people
-WHERE to_tsvector('russian', full_name)
-      @@ plainto_tsquery('russian', $1)
+WHERE to_tsvector('simple', full_name)
+      @@ plainto_tsquery('simple', $1)
 LIMIT 1
 `
 
@@ -104,7 +104,7 @@ func main() {
 	fmt.Println("warmup...")
 
 	for i := 0; i < warmupCount && i < len(queries); i++ {
-		_, _ = execute(ctx,pool,queries[i])
+		_, _ = execute(ctx, pool, queries[i])
 	}
 
 	fmt.Println()
@@ -206,7 +206,7 @@ func runBenchmark(
 				}
 			}
 
-			mu.Lock()			
+			mu.Lock()
 			latencies = append(
 				latencies,
 				local...,
@@ -247,9 +247,9 @@ func runBenchmark(
 
 	if len(latencies) > 0 {
 		result.Avg = total / time.Duration(len(latencies))
-		result.P50 = percentile(latencies,50)
-		result.P95 = percentile(latencies,95)
-		result.P99 = percentile(latencies,99)
+		result.P50 = percentile(latencies, 50)
+		result.P95 = percentile(latencies, 95)
+		result.P99 = percentile(latencies, 99)
 		result.Max = latencies[len(latencies)-1]
 	}
 	return result
@@ -310,7 +310,7 @@ func printMedianResult(
 		},
 	)
 
-	m:=results[len(results)/2]
+	m := results[len(results)/2]
 	fmt.Println("---- median run ----")
 
 	fmt.Printf("workers : %d\n", m.Workers)
@@ -329,24 +329,24 @@ func printMedianResult(
 	fmt.Printf("qps     : %.0f\n", m.QPS)
 }
 
-func loadQueries(path string)[]string{
-	file,err:=os.Open(path)
-	if err!=nil{
+func loadQueries(path string) []string {
+	file, err := os.Open(path)
+	if err != nil {
 		log.Fatal(err)
 	}
 	defer file.Close()
 
-	rows,err:=csv.NewReader(file).ReadAll()
-	if err!=nil{
+	rows, err := csv.NewReader(file).ReadAll()
+	if err != nil {
 		log.Fatal(err)
 	}
-	result:=make([]string,0,len(rows))
+	result := make([]string, 0, len(rows))
 
-	for _,row:=range rows{
-		if len(row)==0{
+	for _, row := range rows {
+		if len(row) == 0 {
 			continue
 		}
-		result=append(
+		result = append(
 			result,
 			row[0],
 		)

@@ -219,8 +219,9 @@ func execute(
 			`
 			SELECT id
 			FROM people
+			WHERE similarity(full_name, $1) >= 0.45
 			ORDER BY full_name <-> $1
-			LIMIT 1
+			LIMIT 1;
 			`,
 			q,
 		).
